@@ -3,13 +3,14 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QDoubleSpinBox, QPushButton, QFileDialog,
     QScrollArea, QFrame, QGroupBox, QSplitter, QMessageBox,
-    QScrollArea
+    QScrollArea, QComboBox, QTabWidget
 )
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 
 import sys
 import os
+import json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.editor import ImageEditor
@@ -150,6 +151,18 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        # 导入预设
+        import_action = file_menu.addAction("导入预设(&I)")
+        import_action.setShortcut("Ctrl+I")
+        import_action.triggered.connect(self.import_preset)
+
+        # 导出预设
+        export_action = file_menu.addAction("导出预设(&E)")
+        export_action.setShortcut("Ctrl+E")
+        export_action.triggered.connect(self.export_preset)
+
+        file_menu.addSeparator()
+
         exit_action = file_menu.addAction("退出(&X)")
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
@@ -165,6 +178,16 @@ class MainWindow(QMainWindow):
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(self.save_image)
         toolbar.addWidget(save_btn)
+
+        toolbar.addSeparator()
+
+        import_btn = QPushButton("导入预设")
+        import_btn.clicked.connect(self.import_preset)
+        toolbar.addWidget(import_btn)
+
+        export_btn = QPushButton("导出预设")
+        export_btn.clicked.connect(self.export_preset)
+        toolbar.addWidget(export_btn)
 
         toolbar.addSeparator()
 
@@ -191,8 +214,8 @@ class MainWindow(QMainWindow):
         """创建编辑面板"""
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumWidth(280)
-        scroll_area.setMaximumWidth(400)
+        scroll_area.setMinimumWidth(320)
+        scroll_area.setMaximumWidth(450)
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -203,14 +226,14 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
 
+        # 创建滑块字典
+        self.sliders = {}
+
         # 基本调整组
         basic_group = QGroupBox("基本调整")
         basic_layout = QVBoxLayout(basic_group)
 
-        # 创建滑块
-        self.sliders = {}
-
-        # 曝光 (-100 到 +100，内部映射到 -5~5)
+        # 曝光
         slider = EditSlider("曝光", "exposure", -100, 100)
         slider.valueChanged.connect(self._on_param_changed)
         self.sliders["exposure"] = slider
@@ -272,23 +295,165 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(effects_group)
 
-        # 颜色调整组
-        color_group = QGroupBox("颜色调整")
-        color_layout = QVBoxLayout(color_group)
+        # ==================== 颜色面板 ====================
+        color_group = QGroupBox("颜色面板")
+        color_main_layout = QVBoxLayout(color_group)
+
+        # 白平衡
+        wb_label = QLabel("白平衡")
+        wb_label.setStyleSheet("font-weight: bold;")
+        color_main_layout.addWidget(wb_label)
+
+        # 色温
+        slider = EditSlider("色温", "temp", -100, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["temp"] = slider
+        color_main_layout.addWidget(slider)
+
+        # 色调
+        slider = EditSlider("色调", "tint", -150, 150)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["tint"] = slider
+        color_main_layout.addWidget(slider)
 
         # 鲜艳度
         slider = EditSlider("鲜艳度", "vibrance", -100, 100)
         slider.valueChanged.connect(self._on_param_changed)
         self.sliders["vibrance"] = slider
-        color_layout.addWidget(slider)
+        color_main_layout.addWidget(slider)
 
         # 饱和度
         slider = EditSlider("饱和度", "saturation", -100, 100)
         slider.valueChanged.connect(self._on_param_changed)
         self.sliders["saturation"] = slider
-        color_layout.addWidget(slider)
+        color_main_layout.addWidget(slider)
+
+        # HSL 颜色混合器
+        hsl_label = QLabel("HSL 颜色混合器")
+        hsl_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        color_main_layout.addWidget(hsl_label)
+
+        # 颜色选择下拉框
+        self.hsl_color_combo = QComboBox()
+        self.hsl_color_combo.addItems(["红色", "橙色", "黄色", "绿色", "青色", "蓝色", "紫色", "洋红"])
+        self.hsl_color_combo.currentIndexChanged.connect(self._on_hsl_color_changed)
+        color_main_layout.addWidget(self.hsl_color_combo)
+
+        # HSL 滑块
+        self.hsl_sliders = {}
+        colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
+
+        slider = EditSlider("色相", "hsl_hue_red", -100, 100)
+        slider.valueChanged.connect(self._on_hsl_param_changed)
+        self.hsl_sliders["hue"] = slider
+        color_main_layout.addWidget(slider)
+
+        slider = EditSlider("饱和度", "hsl_sat_red", -100, 100)
+        slider.valueChanged.connect(self._on_hsl_param_changed)
+        self.hsl_sliders["sat"] = slider
+        color_main_layout.addWidget(slider)
+
+        slider = EditSlider("明度", "hsl_lum_red", -100, 100)
+        slider.valueChanged.connect(self._on_hsl_param_changed)
+        self.hsl_sliders["lum"] = slider
+        color_main_layout.addWidget(slider)
+
+        self.hsl_colors = colors
+        self._update_hsl_sliders()
+
+        # 颜色分级
+        cg_label = QLabel("颜色分级")
+        cg_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        color_main_layout.addWidget(cg_label)
+
+        # 阴影
+        cg_shadows_label = QLabel("阴影")
+        cg_shadows_label.setStyleSheet("color: #888;")
+        color_main_layout.addWidget(cg_shadows_label)
+
+        slider = EditSlider("色相", "cg_shadows_hue", 0, 360)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_shadows_hue"] = slider
+        color_main_layout.addWidget(slider)
+
+        slider = EditSlider("饱和度", "cg_shadows_sat", 0, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_shadows_sat"] = slider
+        color_main_layout.addWidget(slider)
+
+        # 高光
+        cg_highlights_label = QLabel("高光")
+        cg_highlights_label.setStyleSheet("color: #888;")
+        color_main_layout.addWidget(cg_highlights_label)
+
+        slider = EditSlider("色相", "cg_highlights_hue", 0, 360)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_highlights_hue"] = slider
+        color_main_layout.addWidget(slider)
+
+        slider = EditSlider("饱和度", "cg_highlights_sat", 0, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_highlights_sat"] = slider
+        color_main_layout.addWidget(slider)
+
+        # 混合与平衡
+        slider = EditSlider("混合", "cg_blending", 0, 100, default_val=50)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_blending"] = slider
+        color_main_layout.addWidget(slider)
+
+        slider = EditSlider("平衡", "cg_balance", -100, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["cg_balance"] = slider
+        color_main_layout.addWidget(slider)
 
         layout.addWidget(color_group)
+
+        # ==================== 细节面板 ====================
+        detail_group = QGroupBox("细节面板")
+        detail_layout = QVBoxLayout(detail_group)
+
+        # 锐化
+        sharpen_label = QLabel("锐化")
+        sharpen_label.setStyleSheet("font-weight: bold;")
+        detail_layout.addWidget(sharpen_label)
+
+        slider = EditSlider("数量", "sharpen_amount", 0, 150)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["sharpen_amount"] = slider
+        detail_layout.addWidget(slider)
+
+        slider = EditSlider("半径", "sharpen_radius", 0.5, 3.0, default_val=1.0, decimals=1)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["sharpen_radius"] = slider
+        detail_layout.addWidget(slider)
+
+        slider = EditSlider("细节", "sharpen_detail", 0, 100, default_val=25)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["sharpen_detail"] = slider
+        detail_layout.addWidget(slider)
+
+        slider = EditSlider("遮罩", "sharpen_masking", 0, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["sharpen_masking"] = slider
+        detail_layout.addWidget(slider)
+
+        # 降噪
+        noise_label = QLabel("降噪")
+        noise_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        detail_layout.addWidget(noise_label)
+
+        slider = EditSlider("明度", "noise_luminance", 0, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["noise_luminance"] = slider
+        detail_layout.addWidget(slider)
+
+        slider = EditSlider("颜色", "noise_color", 0, 100)
+        slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["noise_color"] = slider
+        detail_layout.addWidget(slider)
+
+        layout.addWidget(detail_group)
 
         # 重置按钮
         reset_btn = QPushButton("重置所有调整")
@@ -307,6 +472,56 @@ class MainWindow(QMainWindow):
 
         self.editor.set_param(param_name, value)
         self._update_display()
+
+    def _on_hsl_color_changed(self, index: int):
+        """HSL颜色选择改变时更新滑块"""
+        self._update_hsl_sliders()
+
+    def _on_hsl_param_changed(self, param_name: str, value: float):
+        """HSL参数变化时处理"""
+        if self._updating_image:
+            return
+
+        color_idx = self.hsl_color_combo.currentIndex()
+        color = self.hsl_colors[color_idx]
+
+        # 确定是hue、sat还是lum
+        if "hue" in param_name:
+            actual_param = f"hsl_hue_{color}"
+        elif "sat" in param_name:
+            actual_param = f"hsl_sat_{color}"
+        else:
+            actual_param = f"hsl_lum_{color}"
+
+        self.editor.set_param(actual_param, value)
+        self._update_display()
+
+    def _update_hsl_sliders(self):
+        """更新HSL滑块显示当前选中颜色的值"""
+        color_idx = self.hsl_color_combo.currentIndex()
+        color = self.hsl_colors[color_idx]
+
+        self._updating_image = True
+        try:
+            # 获取当前颜色的参数值
+            hue_val = self.editor.get_param(f"hsl_hue_{color}")
+            sat_val = self.editor.get_param(f"hsl_sat_{color}")
+            lum_val = self.editor.get_param(f"hsl_lum_{color}")
+
+            # 更新滑块
+            self.hsl_sliders["hue"].blockSignals(True)
+            self.hsl_sliders["hue"].set_value(hue_val)
+            self.hsl_sliders["hue"].blockSignals(False)
+
+            self.hsl_sliders["sat"].blockSignals(True)
+            self.hsl_sliders["sat"].set_value(sat_val)
+            self.hsl_sliders["sat"].blockSignals(False)
+
+            self.hsl_sliders["lum"].blockSignals(True)
+            self.hsl_sliders["lum"].set_value(lum_val)
+            self.hsl_sliders["lum"].blockSignals(False)
+        finally:
+            self._updating_image = False
 
     def _update_display(self):
         """更新图像显示"""
@@ -401,8 +616,73 @@ class MainWindow(QMainWindow):
         """重置所有编辑"""
         self.editor.reset()
         self._reset_sliders()
+        self._update_hsl_sliders()
         self._display_image()
         self.statusBar().showMessage("已重置所有调整")
+
+    def import_preset(self):
+        """导入预设文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入预设",
+            "",
+            "JSON文件 (*.json);;所有文件 (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    params = json.load(f)
+
+                self.editor.set_params_from_dict(params)
+                self._update_sliders_from_params()
+                self._display_image()
+                self.statusBar().showMessage(f"已导入预设: {file_path}")
+                QMessageBox.information(self, "成功", "预设导入成功!")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导入预设失败: {e}")
+
+    def export_preset(self):
+        """导出预设文件"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出预设",
+            "",
+            "JSON文件 (*.json)"
+        )
+
+        if file_path:
+            if not file_path.endswith('.json'):
+                file_path += '.json'
+
+            try:
+                params = self.editor.get_params_dict()
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(params, f, indent=2, ensure_ascii=False)
+
+                self.statusBar().showMessage(f"已导出预设: {file_path}")
+                QMessageBox.information(self, "成功", "预设导出成功!")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导出预设失败: {e}")
+
+    def _update_sliders_from_params(self):
+        """从编辑器参数更新所有滑块"""
+        params = self.editor.get_all_params()
+
+        self._updating_image = True
+        try:
+            # 更新普通滑块
+            for key, slider in self.sliders.items():
+                if hasattr(params, key):
+                    value = getattr(params, key)
+                    slider.blockSignals(True)
+                    slider.set_value(value)
+                    slider.blockSignals(False)
+
+            # 更新HSL滑块
+            self._update_hsl_sliders()
+        finally:
+            self._updating_image = False
 
     def resizeEvent(self, event):
         """窗口大小改变时重新显示图像"""

@@ -2,14 +2,15 @@
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 from typing import Dict, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import colorsys
 
 
 @dataclass
 class EditParams:
     """编辑参数数据类"""
     # 基本调整参数
-    exposure: float = 0.0       # 曝光: -5.0 到 +5.0
+    exposure: float = 0.0       # 曝光: -100 到 +100
     contrast: float = 0.0       # 对比度: -100 到 +100
     highlights: float = 0.0     # 高光: -100 到 +100
     shadows: float = 0.0        # 阴影: -100 到 +100
@@ -20,6 +21,65 @@ class EditParams:
     dehaze: float = 0.0         # 去朦胧: -100 到 +100
     vibrance: float = 0.0       # 鲜艳度: -100 到 +100
     saturation: float = 0.0     # 饱和度: -100 到 +100
+
+    # 白平衡参数
+    temp: float = 0.0           # 色温: -100 到 +100 (蓝-黄)
+    tint: float = 0.0           # 色调: -150 到 +150 (绿-洋红)
+
+    # HSL参数 - 8种颜色 (红、橙、黄、绿、青、蓝、紫、洋红)
+    # 色相调整
+    hsl_hue_red: float = 0.0
+    hsl_hue_orange: float = 0.0
+    hsl_hue_yellow: float = 0.0
+    hsl_hue_green: float = 0.0
+    hsl_hue_cyan: float = 0.0
+    hsl_hue_blue: float = 0.0
+    hsl_hue_purple: float = 0.0
+    hsl_hue_magenta: float = 0.0
+
+    # 饱和度调整
+    hsl_sat_red: float = 0.0
+    hsl_sat_orange: float = 0.0
+    hsl_sat_yellow: float = 0.0
+    hsl_sat_green: float = 0.0
+    hsl_sat_cyan: float = 0.0
+    hsl_sat_blue: float = 0.0
+    hsl_sat_purple: float = 0.0
+    hsl_sat_magenta: float = 0.0
+
+    # 明度调整
+    hsl_lum_red: float = 0.0
+    hsl_lum_orange: float = 0.0
+    hsl_lum_yellow: float = 0.0
+    hsl_lum_green: float = 0.0
+    hsl_lum_cyan: float = 0.0
+    hsl_lum_blue: float = 0.0
+    hsl_lum_purple: float = 0.0
+    hsl_lum_magenta: float = 0.0
+
+    # 颜色分级参数
+    # 阴影
+    cg_shadows_hue: float = 0.0     # 0-360
+    cg_shadows_sat: float = 0.0     # 0-100
+    # 中间调
+    cg_midtones_hue: float = 0.0
+    cg_midtones_sat: float = 0.0
+    # 高光
+    cg_highlights_hue: float = 0.0
+    cg_highlights_sat: float = 0.0
+    # 混合与平衡
+    cg_blending: float = 50.0       # 0-100
+    cg_balance: float = 0.0         # -100 到 +100
+
+    # 细节面板参数 - 锐化
+    sharpen_amount: float = 0.0     # 0-150
+    sharpen_radius: float = 1.0     # 0.5-3.0
+    sharpen_detail: float = 25.0    # 0-100
+    sharpen_masking: float = 0.0    # 0-100
+
+    # 细节面板参数 - 降噪
+    noise_luminance: float = 0.0    # 0-100
+    noise_color: float = 0.0        # 0-100
 
 
 class ImageEditor:
@@ -199,6 +259,21 @@ class ImageEditor:
             sat_factor = 1 + self._params.saturation / 100.0
             img_array = self._adjust_saturation(img_array, sat_factor)
 
+        # 12. 白平衡调整
+        img_array = self._adjust_white_balance(img_array)
+
+        # 13. HSL调整
+        img_array = self._adjust_hsl(img_array)
+
+        # 14. 颜色分级
+        img_array = self._adjust_color_grading(img_array)
+
+        # 15. 锐化调整
+        img_array = self._adjust_sharpening(img_array, is_rgba)
+
+        # 16. 降噪调整
+        img_array = self._adjust_noise_reduction(img_array)
+
         # 裁剪值到有效范围
         img_array[:, :, :3] = np.clip(img_array[:, :, :3], 0, 255)
 
@@ -265,6 +340,21 @@ class ImageEditor:
         if self._params.saturation != 0:
             sat_factor = 1 + self._params.saturation / 100.0
             img_array = self._adjust_saturation(img_array, sat_factor)
+
+        # 12. 白平衡调整
+        img_array = self._adjust_white_balance(img_array)
+
+        # 13. HSL调整
+        img_array = self._adjust_hsl(img_array)
+
+        # 14. 颜色分级
+        img_array = self._adjust_color_grading(img_array)
+
+        # 15. 锐化调整
+        img_array = self._adjust_sharpening(img_array, is_rgba)
+
+        # 16. 降噪调整
+        img_array = self._adjust_noise_reduction(img_array)
 
         # 裁剪值到有效范围
         img_array[:, :, :3] = np.clip(img_array[:, :, :3], 0, 255)
@@ -439,3 +529,281 @@ class ImageEditor:
             img[:, :, i] = luminance + (img[:, :, i] - luminance) * factor
 
         return img
+
+    def _adjust_white_balance(self, img: np.ndarray) -> np.ndarray:
+        """调整白平衡（色温和色调）"""
+        temp = self._params.temp
+        tint = self._params.tint
+
+        if temp == 0 and tint == 0:
+            return img
+
+        # 色温调整：正值偏黄/暖，负值偏蓝/冷
+        if temp != 0:
+            factor = temp / 100.0
+            # 蓝色通道（冷）vs 红色通道（暖）
+            if factor > 0:
+                # 变暖：增加红色，减少蓝色
+                img[:, :, 0] = img[:, :, 0] * (1 + factor * 0.1)
+                img[:, :, 2] = img[:, :, 2] * (1 - factor * 0.05)
+            else:
+                # 变冷：减少红色，增加蓝色
+                img[:, :, 0] = img[:, :, 0] * (1 + factor * 0.05)
+                img[:, :, 2] = img[:, :, 2] * (1 - factor * 0.1)
+
+        # 色调调整：正值偏洋红，负值偏绿
+        if tint != 0:
+            factor = tint / 150.0
+            # 绿色通道 vs 红+蓝通道
+            if factor > 0:
+                # 偏洋红：减少绿色
+                img[:, :, 1] = img[:, :, 1] * (1 - factor * 0.1)
+            else:
+                # 偏绿：增加绿色
+                img[:, :, 1] = img[:, :, 1] * (1 - factor * 0.1)
+
+        return img
+
+    def _adjust_hsl(self, img: np.ndarray) -> np.ndarray:
+        """HSL调整 - 对8种颜色分别调整色相、饱和度、明度"""
+        # 将RGB转换为HSV进行处理
+        h, w, c = img.shape[:3]
+        img_flat = img[:, :, :3].reshape(-1, 3) / 255.0
+
+        # 定义颜色范围（色相角度）
+        color_ranges = {
+            'red': [(0, 15), (345, 360)],
+            'orange': [(15, 45)],
+            'yellow': [(45, 75)],
+            'green': [(75, 150)],
+            'cyan': [(150, 195)],
+            'blue': [(195, 255)],
+            'purple': [(255, 285)],
+            'magenta': [(285, 345)]
+        }
+
+        # HSL调整参数
+        hsl_params = {
+            'red': (self._params.hsl_hue_red, self._params.hsl_sat_red, self._params.hsl_lum_red),
+            'orange': (self._params.hsl_hue_orange, self._params.hsl_sat_orange, self._params.hsl_lum_orange),
+            'yellow': (self._params.hsl_hue_yellow, self._params.hsl_sat_yellow, self._params.hsl_lum_yellow),
+            'green': (self._params.hsl_hue_green, self._params.hsl_sat_green, self._params.hsl_lum_green),
+            'cyan': (self._params.hsl_hue_cyan, self._params.hsl_sat_cyan, self._params.hsl_lum_cyan),
+            'blue': (self._params.hsl_hue_blue, self._params.hsl_sat_blue, self._params.hsl_lum_blue),
+            'purple': (self._params.hsl_hue_purple, self._params.hsl_sat_purple, self._params.hsl_lum_purple),
+            'magenta': (self._params.hsl_hue_magenta, self._params.hsl_sat_magenta, self._params.hsl_lum_magenta)
+        }
+
+        # 检查是否有任何HSL参数被调整
+        has_hsl_adjustment = any(
+            hue != 0 or sat != 0 or lum != 0
+            for hue, sat, lum in hsl_params.values()
+        )
+
+        if not has_hsl_adjustment:
+            return img
+
+        # 转换到HSV空间
+        result = []
+        for pixel in img_flat:
+            r, g, b = pixel
+            h_val, s_val, v_val = colorsys.rgb_to_hsv(r, g, b)
+            h_deg = h_val * 360  # 转换为0-360度
+
+            # 找出像素属于哪个颜色范围
+            for color_name, ranges in color_ranges.items():
+                for start, end in ranges:
+                    if start <= h_deg < end or (start > end and (h_deg >= start or h_deg < end)):
+                        hue_adj, sat_adj, lum_adj = hsl_params[color_name]
+
+                        # 色相调整 (-100 到 +100 映射到 -30° 到 +30°)
+                        if hue_adj != 0:
+                            h_deg = (h_deg + hue_adj * 0.3) % 360
+
+                        # 饱和度调整
+                        if sat_adj != 0:
+                            s_val = np.clip(s_val * (1 + sat_adj / 100.0), 0, 1)
+
+                        # 明度调整
+                        if lum_adj != 0:
+                            v_val = np.clip(v_val * (1 + lum_adj / 200.0), 0, 1)
+
+                        break
+
+            # 转回RGB
+            h_val = h_deg / 360.0
+            r_new, g_new, b_new = colorsys.hsv_to_rgb(h_val, s_val, v_val)
+            result.append([r_new * 255, g_new * 255, b_new * 255])
+
+        img[:, :, :3] = np.array(result).reshape(h, w, 3)
+        return img
+
+    def _adjust_color_grading(self, img: np.ndarray) -> np.ndarray:
+        """颜色分级 - 为阴影、中间调、高光添加颜色"""
+        # 获取参数
+        shadows_hue = self._params.cg_shadows_hue
+        shadows_sat = self._params.cg_shadows_sat
+        midtones_hue = self._params.cg_midtones_hue
+        midtones_sat = self._params.cg_midtones_sat
+        highlights_hue = self._params.cg_highlights_hue
+        highlights_sat = self._params.cg_highlights_sat
+        blending = self._params.cg_blending / 100.0
+        balance = self._params.cg_balance / 100.0
+
+        # 检查是否有颜色分级调整
+        if (shadows_sat == 0 and midtones_sat == 0 and highlights_sat == 0):
+            return img
+
+        # 计算亮度
+        luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
+        luminance_norm = luminance / 255.0
+
+        # 创建区域蒙版
+        shadows_mask = np.clip(1 - luminance_norm * 2, 0, 1)
+        highlights_mask = np.clip((luminance_norm - 0.5) * 2, 0, 1)
+        midtones_mask = 1 - shadows_mask - highlights_mask
+
+        # 应用混合
+        if blending > 0:
+            blur_size = int(blending * 10) + 1
+            from scipy.ndimage import gaussian_filter
+            shadows_mask = gaussian_filter(shadows_mask, sigma=blur_size)
+            highlights_mask = gaussian_filter(highlights_mask, sigma=blur_size)
+            midtones_mask = np.clip(1 - shadows_mask - highlights_mask, 0, 1)
+
+        # 应用平衡
+        if balance != 0:
+            shadows_mask *= (1 + balance)
+            highlights_mask *= (1 - balance)
+            total = shadows_mask + highlights_mask + midtones_mask + 1e-6
+            shadows_mask /= total
+            highlights_mask /= total
+            midtones_mask /= total
+
+        # 将HSV颜色转换为RGB
+        def hsv_to_rgb_array(hue, sat, val=1.0):
+            h = hue / 360.0
+            c = val * sat
+            x = c * (1 - abs((h * 6) % 2 - 1))
+            m = val - c
+
+            if h < 1/6:
+                return np.array([c + m, x + m, m])
+            elif h < 2/6:
+                return np.array([x + m, c + m, m])
+            elif h < 3/6:
+                return np.array([m, c + m, x + m])
+            elif h < 4/6:
+                return np.array([m, x + m, c + m])
+            elif h < 5/6:
+                return np.array([x + m, m, c + m])
+            else:
+                return np.array([c + m, m, x + m])
+
+        # 应用阴影颜色
+        if shadows_sat > 0:
+            shadow_color = hsv_to_rgb_array(shadows_hue, shadows_sat / 100.0) * 255
+            for i in range(3):
+                img[:, :, i] = img[:, :, i] * (1 - shadows_mask * shadows_sat / 100.0 * 0.5) + \
+                               shadow_color[i] * shadows_mask * shadows_sat / 100.0 * 0.5
+
+        # 应用中间调颜色
+        if midtones_sat > 0:
+            midtone_color = hsv_to_rgb_array(midtones_hue, midtones_sat / 100.0) * 255
+            for i in range(3):
+                img[:, :, i] = img[:, :, i] * (1 - midtones_mask * midtones_sat / 100.0 * 0.3) + \
+                               midtone_color[i] * midtones_mask * midtones_sat / 100.0 * 0.3
+
+        # 应用高光颜色
+        if highlights_sat > 0:
+            highlight_color = hsv_to_rgb_array(highlights_hue, highlights_sat / 100.0) * 255
+            for i in range(3):
+                img[:, :, i] = img[:, :, i] * (1 - highlights_mask * highlights_sat / 100.0 * 0.5) + \
+                               highlight_color[i] * highlights_mask * highlights_sat / 100.0 * 0.5
+
+        return img
+
+    def _adjust_sharpening(self, img: np.ndarray, is_rgba: bool) -> np.ndarray:
+        """锐化调整"""
+        amount = self._params.sharpen_amount
+        radius = self._params.sharpen_radius
+        detail = self._params.sharpen_detail
+        masking = self._params.sharpen_masking
+
+        if amount == 0:
+            return img
+
+        # 转换为PIL图像
+        pil_img = Image.fromarray(img.astype(np.uint8))
+
+        # 使用UnsharpMask进行锐化
+        # percent 控制锐化强度
+        percent = amount * 2  # 将0-150映射到更强的效果
+        threshold = int(255 * (1 - detail / 100.0))  # detail越高，threshold越低
+
+        sharpened = pil_img.filter(
+            ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold)
+        )
+
+        # 应用蒙版：只对边缘进行锐化
+        if masking > 0:
+            # 计算边缘蒙版
+            gray = np.array(pil_img.convert('L')).astype(np.float32)
+            # 使用拉普拉斯算子检测边缘
+            from scipy.ndimage import laplace
+            edges = np.abs(laplace(gray))
+            edge_mask = np.clip(edges / (edges.max() + 1e-6), 0, 1)
+            # 根据masking参数调整蒙版
+            edge_mask = np.power(edge_mask, 2 - masking / 50.0)
+            edge_mask = np.stack([edge_mask] * 3, axis=2)
+
+            result_array = np.array(pil_img) * (1 - edge_mask * amount / 150.0) + \
+                          np.array(sharpened) * edge_mask * amount / 150.0
+            return result_array.astype(np.float32)
+        else:
+            # 直接混合
+            factor = amount / 150.0
+            result = Image.blend(pil_img, sharpened, factor)
+            return np.array(result).astype(np.float32)
+
+    def _adjust_noise_reduction(self, img: np.ndarray) -> np.ndarray:
+        """降噪调整"""
+        lum_noise = self._params.noise_luminance
+        color_noise = self._params.noise_color
+
+        if lum_noise == 0 and color_noise == 0:
+            return img
+
+        # 明度降噪：使用高斯模糊
+        if lum_noise > 0:
+            pil_img = Image.fromarray(img.astype(np.uint8))
+            # 降噪强度映射到模糊半径
+            radius = lum_noise / 25.0
+            blurred = pil_img.filter(ImageFilter.GaussianBlur(radius=radius))
+            factor = lum_noise / 100.0
+            result = Image.blend(pil_img, blurred, factor)
+            img = np.array(result).astype(np.float32)
+
+        # 颜色降噪：在颜色通道上应用更强的模糊
+        if color_noise > 0:
+            # 转换到Lab颜色空间进行颜色降噪
+            # 简化处理：直接对颜色差异进行平滑
+            mean_color = np.mean(img[:, :, :3], axis=2, keepdims=True)
+            color_diff = img[:, :, :3] - mean_color
+            # 减少颜色差异
+            factor = 1 - color_noise / 100.0 * 0.5
+            img[:, :, :3] = mean_color + color_diff * factor
+
+        return img
+
+    def get_params_dict(self) -> dict:
+        """获取所有参数作为字典（用于导出）"""
+        from dataclasses import asdict
+        return asdict(self._params)
+
+    def set_params_from_dict(self, params: dict):
+        """从字典设置参数（用于导入）"""
+        for key, value in params.items():
+            if hasattr(self._params, key):
+                setattr(self._params, key, value)
+        self._cache_valid = False
