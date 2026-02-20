@@ -707,34 +707,25 @@ class ImageEditor:
         luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
         luminance_norm = luminance / 255.0
 
-        # 创建区域蒙版
-        shadows_mask = np.clip(1 - luminance_norm * 2, 0, 1)
-        highlights_mask = np.clip((luminance_norm - 0.5) * 2, 0, 1)
-        midtones_mask = 1 - shadows_mask - highlights_mask
+        # 平衡参数影响中间点的位置
+        # balance = 0: 中间点在 0.5
+        # balance = 100: 中间点在 0.0 (更多区域被视为高光)
+        # balance = -100: 中间点在 1.0 (更多区域被视为阴影)
+        mid_point = 0.5 - balance * 0.4  # 范围: 0.1 ~ 0.9
 
-        # 应用混合
-        if blending > 0:
-            blur_size = max(1, int(blending * 5))
-            # 使用 PIL 高斯模糊替代 scipy
-            from PIL import Image as PILImage
-            shadows_pil = PILImage.fromarray((shadows_mask * 255).astype(np.uint8))
-            highlights_pil = PILImage.fromarray((highlights_mask * 255).astype(np.uint8))
-            shadows_blurred = shadows_pil.filter(ImageFilter.GaussianBlur(radius=blur_size))
-            highlights_blurred = highlights_pil.filter(ImageFilter.GaussianBlur(radius=blur_size))
-            shadows_mask = np.array(shadows_blurred).astype(np.float32) / 255.0
-            highlights_mask = np.array(highlights_blurred).astype(np.float32) / 255.0
-            midtones_mask = np.clip(1 - shadows_mask - highlights_mask, 0, 1)
+        # 创建区域蒙版 - 使用S曲线实现平滑过渡
+        # 混合参数控制过渡的锐度
+        transition_width = 0.3 + blending * 0.4  # 范围: 0.3 ~ 0.7
 
-        # 应用平衡
-        if balance != 0:
-            shadows_mask *= (1 + balance)
-            highlights_mask *= (1 - balance)
-            total = shadows_mask + highlights_mask + midtones_mask + 1e-6
-            shadows_mask /= total
-            highlights_mask /= total
-            midtones_mask /= total
+        # 阴影区域：亮度低于中间点的部分
+        shadows_mask = 1.0 / (1.0 + np.exp((luminance_norm - mid_point) / transition_width * 4))
+        # 高光区域：亮度高于中间点的部分
+        highlights_mask = 1.0 / (1.0 + np.exp((mid_point - luminance_norm) / transition_width * 4))
+        # 中间调：剩余部分
+        midtones_mask = 1.0 - shadows_mask - highlights_mask
+        midtones_mask = np.clip(midtones_mask, 0, 1)
 
-        # 将HSV颜色转换为RGB
+        # HSV转RGB函数
         def hsv_to_rgb_array(hue, sat, val=1.0):
             h = hue / 360.0
             c = val * sat
@@ -754,26 +745,30 @@ class ImageEditor:
             else:
                 return np.array([c + m, m, x + m])
 
-        # 应用阴影颜色
+        # 应用阴影颜色 - 增强效果强度
         if shadows_sat > 0:
             shadow_color = hsv_to_rgb_array(shadows_hue, shadows_sat / 100.0) * 255
+            # 增强混合系数 - 使用更高的混合强度
+            mix_strength = shadows_sat / 100.0 * 0.9  # 最大混合90%
             for i in range(3):
-                img[:, :, i] = img[:, :, i] * (1 - shadows_mask * shadows_sat / 100.0 * 0.5) + \
-                               shadow_color[i] * shadows_mask * shadows_sat / 100.0 * 0.5
+                img[:, :, i] = img[:, :, i] * (1 - shadows_mask * mix_strength) + \
+                               shadow_color[i] * shadows_mask * mix_strength
 
         # 应用中间调颜色
         if midtones_sat > 0:
             midtone_color = hsv_to_rgb_array(midtones_hue, midtones_sat / 100.0) * 255
+            mix_strength = midtones_sat / 100.0 * 0.7
             for i in range(3):
-                img[:, :, i] = img[:, :, i] * (1 - midtones_mask * midtones_sat / 100.0 * 0.3) + \
-                               midtone_color[i] * midtones_mask * midtones_sat / 100.0 * 0.3
+                img[:, :, i] = img[:, :, i] * (1 - midtones_mask * mix_strength) + \
+                               midtone_color[i] * midtones_mask * mix_strength
 
-        # 应用高光颜色
+        # 应用高光颜色 - 增强效果强度
         if highlights_sat > 0:
             highlight_color = hsv_to_rgb_array(highlights_hue, highlights_sat / 100.0) * 255
+            mix_strength = highlights_sat / 100.0 * 0.9
             for i in range(3):
-                img[:, :, i] = img[:, :, i] * (1 - highlights_mask * highlights_sat / 100.0 * 0.5) + \
-                               highlight_color[i] * highlights_mask * highlights_sat / 100.0 * 0.5
+                img[:, :, i] = img[:, :, i] * (1 - highlights_mask * mix_strength) + \
+                               highlight_color[i] * highlights_mask * mix_strength
 
         return img
 
@@ -791,13 +786,20 @@ class ImageEditor:
         pil_img = Image.fromarray(img.astype(np.uint8))
 
         # 使用UnsharpMask进行锐化
-        # radius 必须是整数
+        # radius 必须是整数，至少为1
         radius_int = max(1, int(round(radius)))
-        percent = amount * 2  # 将0-150映射到更强的效果
-        threshold = int(255 * (1 - detail / 100.0))  # detail越高，threshold越低
+
+        # percent 控制锐化强度，值越大锐化越强
+        # 将 0-150 映射到 50-300 的范围
+        percent_int = max(50, int(50 + amount * 1.67))
+
+        # threshold 控制锐化的阈值，值越小锐化越明显
+        # detail 参数：值越高锐化更多细节（threshold 越低）
+        # 将 detail 0-100 映射到 threshold 20-0
+        threshold_int = max(0, int(20 * (1 - detail / 100.0)))
 
         sharpened = pil_img.filter(
-            ImageFilter.UnsharpMask(radius=radius_int, percent=percent, threshold=threshold)
+            ImageFilter.UnsharpMask(radius=radius_int, percent=percent_int, threshold=threshold_int)
         )
 
         # 应用蒙版：只对边缘进行锐化
@@ -837,8 +839,8 @@ class ImageEditor:
                           np.array(sharpened) * edge_mask * amount / 150.0
             return result_array.astype(np.float32)
         else:
-            # 直接混合
-            factor = amount / 150.0
+            # 直接混合 - 确保有可见的效果
+            factor = min(1.0, amount / 100.0)  # 将混合因子映射到0-1范围
             result = Image.blend(pil_img, sharpened, factor)
             return np.array(result).astype(np.float32)
 

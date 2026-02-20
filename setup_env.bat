@@ -1,5 +1,4 @@
 @echo off
-REM 创建conda环境并安装依赖
 
 echo Creating conda environment 'lightroom'...
 call conda env create -f environment.yml

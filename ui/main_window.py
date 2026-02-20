@@ -3,10 +3,10 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QDoubleSpinBox, QPushButton, QFileDialog,
     QScrollArea, QFrame, QGroupBox, QSplitter, QMessageBox,
-    QScrollArea, QComboBox, QTabWidget
+    QScrollArea, QComboBox, QTabWidget, QToolButton
 )
 from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal, QParallelAnimationGroup, QPropertyAnimation
 
 import sys
 import os
@@ -19,6 +19,85 @@ from utils.file_utils import (
     get_save_filters,
     get_file_extension
 )
+
+
+class CollapsibleBox(QWidget):
+    """可折叠面板控件"""
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+        self._is_expanded = True
+        self._setup_ui(title)
+
+    def _setup_ui(self, title: str):
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setSpacing(0)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 标题按钮（点击可折叠/展开）
+        self._toggle_button = QToolButton()
+        self._toggle_button.setStyleSheet("""
+            QToolButton {
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                background-color: #f0f0f0;
+                color: #333;
+                font-weight: bold;
+                padding: 8px;
+                text-align: left;
+            }
+            QToolButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        self._toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._toggle_button.setArrowType(Qt.DownArrow)
+        self._toggle_button.setText(title)
+        self._toggle_button.setCheckable(True)
+        self._toggle_button.setChecked(True)
+        self._toggle_button.clicked.connect(self._toggle)
+        self._main_layout.addWidget(self._toggle_button)
+
+        # 内容区域
+        self._content_area = QWidget()
+        self._content_area.setStyleSheet("background-color: #fafafa;")
+        self._content_layout = QVBoxLayout(self._content_area)
+        self._content_layout.setContentsMargins(5, 5, 5, 5)
+        self._content_layout.setSpacing(5)
+
+        # 动画效果
+        self._animation = QParallelAnimationGroup()
+        self._content_animation = QPropertyAnimation(self._content_area, b"maximumHeight")
+        self._content_animation.setDuration(200)
+        self._animation.addAnimation(self._content_animation)
+
+        self._main_layout.addWidget(self._content_area)
+
+    def _toggle(self, checked: bool):
+        self._is_expanded = checked
+        self._toggle_button.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+        if checked:
+            self._content_area.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+            self._content_area.show()
+        else:
+            self._content_area.setMaximumHeight(0)
+            self._content_area.hide()
+
+    def add_widget(self, widget: QWidget):
+        """添加控件到内容区域"""
+        self._content_layout.addWidget(widget)
+
+    def add_layout(self, layout):
+        """添加布局到内容区域"""
+        self._content_layout.addLayout(layout)
+
+    def is_expanded(self) -> bool:
+        return self._is_expanded
+
+    def set_expanded(self, expanded: bool):
+        self._toggle_button.setChecked(expanded)
+        self._toggle(expanded)
 
 
 class EditSlider(QWidget):
@@ -216,248 +295,193 @@ class MainWindow(QMainWindow):
         scroll_area.setWidgetResizable(True)
         scroll_area.setMinimumWidth(320)
         scroll_area.setMaximumWidth(450)
+        scroll_area.setStyleSheet("background-color: #f5f5f5;")
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setSpacing(10)
-
-        # 标题
-        title = QLabel("编辑面板")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
-        layout.addWidget(title)
+        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
 
         # 创建滑块字典
         self.sliders = {}
 
-        # 基本调整组
-        basic_group = QGroupBox("基本调整")
-        basic_layout = QVBoxLayout(basic_group)
+        # ==================== 基本调整面板 ====================
+        basic_box = CollapsibleBox("基本调整")
+        basic_layout = QVBoxLayout()
 
-        # 曝光
-        slider = EditSlider("曝光", "exposure", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["exposure"] = slider
-        basic_layout.addWidget(slider)
+        for name, key in [("曝光", "exposure"), ("对比度", "contrast"),
+                          ("高光", "highlights"), ("阴影", "shadows"),
+                          ("白色色阶", "whites"), ("黑色色阶", "blacks")]:
+            slider = EditSlider(name, key, -100, 100)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            basic_layout.addWidget(slider)
 
-        # 对比度
-        slider = EditSlider("对比度", "contrast", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["contrast"] = slider
-        basic_layout.addWidget(slider)
+        basic_box.add_layout(basic_layout)
+        layout.addWidget(basic_box)
 
-        # 高光
-        slider = EditSlider("高光", "highlights", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["highlights"] = slider
-        basic_layout.addWidget(slider)
+        # ==================== 效果调整面板 ====================
+        effects_box = CollapsibleBox("效果调整")
+        effects_layout = QVBoxLayout()
 
-        # 阴影
-        slider = EditSlider("阴影", "shadows", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["shadows"] = slider
-        basic_layout.addWidget(slider)
+        for name, key in [("纹理", "texture"), ("清晰度", "clarity"), ("去朦胧", "dehaze")]:
+            slider = EditSlider(name, key, -100, 100)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            effects_layout.addWidget(slider)
 
-        # 白色色阶
-        slider = EditSlider("白色色阶", "whites", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["whites"] = slider
-        basic_layout.addWidget(slider)
-
-        # 黑色色阶
-        slider = EditSlider("黑色色阶", "blacks", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["blacks"] = slider
-        basic_layout.addWidget(slider)
-
-        layout.addWidget(basic_group)
-
-        # 效果调整组
-        effects_group = QGroupBox("效果调整")
-        effects_layout = QVBoxLayout(effects_group)
-
-        # 纹理
-        slider = EditSlider("纹理", "texture", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["texture"] = slider
-        effects_layout.addWidget(slider)
-
-        # 清晰度
-        slider = EditSlider("清晰度", "clarity", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["clarity"] = slider
-        effects_layout.addWidget(slider)
-
-        # 去朦胧
-        slider = EditSlider("去朦胧", "dehaze", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["dehaze"] = slider
-        effects_layout.addWidget(slider)
-
-        layout.addWidget(effects_group)
+        effects_box.add_layout(effects_layout)
+        layout.addWidget(effects_box)
 
         # ==================== 颜色面板 ====================
-        color_group = QGroupBox("颜色面板")
-        color_main_layout = QVBoxLayout(color_group)
+        color_box = CollapsibleBox("颜色面板")
+        color_layout = QVBoxLayout()
 
         # 白平衡
         wb_label = QLabel("白平衡")
-        wb_label.setStyleSheet("font-weight: bold;")
-        color_main_layout.addWidget(wb_label)
+        wb_label.setStyleSheet("font-weight: bold; color: #333;")
+        color_layout.addWidget(wb_label)
 
-        # 色温
-        slider = EditSlider("色温", "temp", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["temp"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key, min_val, max_val in [("色温", "temp", -100, 100), ("色调", "tint", -150, 150)]:
+            slider = EditSlider(name, key, min_val, max_val)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            color_layout.addWidget(slider)
 
-        # 色调
-        slider = EditSlider("色调", "tint", -150, 150)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["tint"] = slider
-        color_main_layout.addWidget(slider)
+        # 基础颜色
+        basic_color_label = QLabel("基础颜色")
+        basic_color_label.setStyleSheet("font-weight: bold; color: #333; margin-top: 10px;")
+        color_layout.addWidget(basic_color_label)
 
-        # 鲜艳度
-        slider = EditSlider("鲜艳度", "vibrance", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["vibrance"] = slider
-        color_main_layout.addWidget(slider)
-
-        # 饱和度
-        slider = EditSlider("饱和度", "saturation", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["saturation"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key in [("鲜艳度", "vibrance"), ("饱和度", "saturation")]:
+            slider = EditSlider(name, key, -100, 100)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            color_layout.addWidget(slider)
 
         # HSL 颜色混合器
         hsl_label = QLabel("HSL 颜色混合器")
-        hsl_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        color_main_layout.addWidget(hsl_label)
+        hsl_label.setStyleSheet("font-weight: bold; color: #333; margin-top: 10px;")
+        color_layout.addWidget(hsl_label)
 
-        # 颜色选择下拉框
         self.hsl_color_combo = QComboBox()
         self.hsl_color_combo.addItems(["红色", "橙色", "黄色", "绿色", "青色", "蓝色", "紫色", "洋红"])
         self.hsl_color_combo.currentIndexChanged.connect(self._on_hsl_color_changed)
-        color_main_layout.addWidget(self.hsl_color_combo)
+        self.hsl_color_combo.setStyleSheet("""
+            QComboBox {
+                background-color: white;
+                color: #333;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QComboBox:hover {
+                border: 1px solid #999;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                color: #333;
+                selection-background-color: #e0e0e0;
+                selection-color: #333;
+            }
+        """)
+        color_layout.addWidget(self.hsl_color_combo)
 
-        # HSL 滑块
         self.hsl_sliders = {}
-        colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
+        self.hsl_colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
 
-        slider = EditSlider("色相", "hsl_hue_red", -100, 100)
-        slider.valueChanged.connect(self._on_hsl_param_changed)
-        self.hsl_sliders["hue"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key in [("色相", "hsl_hue"), ("饱和度", "hsl_sat"), ("明度", "hsl_lum")]:
+            slider = EditSlider(name, f"{key}_red", -100, 100)
+            slider.valueChanged.connect(self._on_hsl_param_changed)
+            self.hsl_sliders[key.replace("hsl_", "")] = slider
+            color_layout.addWidget(slider)
 
-        slider = EditSlider("饱和度", "hsl_sat_red", -100, 100)
-        slider.valueChanged.connect(self._on_hsl_param_changed)
-        self.hsl_sliders["sat"] = slider
-        color_main_layout.addWidget(slider)
-
-        slider = EditSlider("明度", "hsl_lum_red", -100, 100)
-        slider.valueChanged.connect(self._on_hsl_param_changed)
-        self.hsl_sliders["lum"] = slider
-        color_main_layout.addWidget(slider)
-
-        self.hsl_colors = colors
         self._update_hsl_sliders()
 
         # 颜色分级
         cg_label = QLabel("颜色分级")
-        cg_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        color_main_layout.addWidget(cg_label)
+        cg_label.setStyleSheet("font-weight: bold; color: #333; margin-top: 10px;")
+        color_layout.addWidget(cg_label)
 
-        # 阴影
         cg_shadows_label = QLabel("阴影")
-        cg_shadows_label.setStyleSheet("color: #888;")
-        color_main_layout.addWidget(cg_shadows_label)
+        cg_shadows_label.setStyleSheet("color: #666;")
+        color_layout.addWidget(cg_shadows_label)
 
-        slider = EditSlider("色相", "cg_shadows_hue", 0, 360)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_shadows_hue"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key, min_val, max_val in [("色相", "cg_shadows_hue", 0, 360), ("饱和度", "cg_shadows_sat", 0, 100)]:
+            slider = EditSlider(name, key, min_val, max_val)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            color_layout.addWidget(slider)
 
-        slider = EditSlider("饱和度", "cg_shadows_sat", 0, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_shadows_sat"] = slider
-        color_main_layout.addWidget(slider)
-
-        # 高光
         cg_highlights_label = QLabel("高光")
-        cg_highlights_label.setStyleSheet("color: #888;")
-        color_main_layout.addWidget(cg_highlights_label)
+        cg_highlights_label.setStyleSheet("color: #666;")
+        color_layout.addWidget(cg_highlights_label)
 
-        slider = EditSlider("色相", "cg_highlights_hue", 0, 360)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_highlights_hue"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key, min_val, max_val in [("色相", "cg_highlights_hue", 0, 360), ("饱和度", "cg_highlights_sat", 0, 100)]:
+            slider = EditSlider(name, key, min_val, max_val)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            color_layout.addWidget(slider)
 
-        slider = EditSlider("饱和度", "cg_highlights_sat", 0, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_highlights_sat"] = slider
-        color_main_layout.addWidget(slider)
+        for name, key, min_val, max_val, default in [("混合", "cg_blending", 0, 100, 50), ("平衡", "cg_balance", -100, 100, 0)]:
+            slider = EditSlider(name, key, min_val, max_val, default_val=default)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            color_layout.addWidget(slider)
 
-        # 混合与平衡
-        slider = EditSlider("混合", "cg_blending", 0, 100, default_val=50)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_blending"] = slider
-        color_main_layout.addWidget(slider)
-
-        slider = EditSlider("平衡", "cg_balance", -100, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["cg_balance"] = slider
-        color_main_layout.addWidget(slider)
-
-        layout.addWidget(color_group)
+        color_box.add_layout(color_layout)
+        layout.addWidget(color_box)
 
         # ==================== 细节面板 ====================
-        detail_group = QGroupBox("细节面板")
-        detail_layout = QVBoxLayout(detail_group)
+        detail_box = CollapsibleBox("细节面板")
+        detail_layout = QVBoxLayout()
 
-        # 锐化
         sharpen_label = QLabel("锐化")
-        sharpen_label.setStyleSheet("font-weight: bold;")
+        sharpen_label.setStyleSheet("font-weight: bold; color: #333;")
         detail_layout.addWidget(sharpen_label)
 
-        slider = EditSlider("数量", "sharpen_amount", 0, 150)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["sharpen_amount"] = slider
-        detail_layout.addWidget(slider)
+        for name, key, min_val, max_val, default, decimals in [
+            ("数量", "sharpen_amount", 0, 150, 0, 0),
+            ("半径", "sharpen_radius", 0.5, 3.0, 1.0, 1),
+            ("细节", "sharpen_detail", 0, 100, 25, 0),
+            ("遮罩", "sharpen_masking", 0, 100, 0, 0)
+        ]:
+            slider = EditSlider(name, key, min_val, max_val, default_val=default, decimals=decimals)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            detail_layout.addWidget(slider)
 
-        slider = EditSlider("半径", "sharpen_radius", 0.5, 3.0, default_val=1.0, decimals=1)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["sharpen_radius"] = slider
-        detail_layout.addWidget(slider)
-
-        slider = EditSlider("细节", "sharpen_detail", 0, 100, default_val=25)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["sharpen_detail"] = slider
-        detail_layout.addWidget(slider)
-
-        slider = EditSlider("遮罩", "sharpen_masking", 0, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["sharpen_masking"] = slider
-        detail_layout.addWidget(slider)
-
-        # 降噪
         noise_label = QLabel("降噪")
-        noise_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        noise_label.setStyleSheet("font-weight: bold; color: #333; margin-top: 10px;")
         detail_layout.addWidget(noise_label)
 
-        slider = EditSlider("明度", "noise_luminance", 0, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["noise_luminance"] = slider
-        detail_layout.addWidget(slider)
+        for name, key in [("明度", "noise_luminance"), ("颜色", "noise_color")]:
+            slider = EditSlider(name, key, 0, 100)
+            slider.valueChanged.connect(self._on_param_changed)
+            self.sliders[key] = slider
+            detail_layout.addWidget(slider)
 
-        slider = EditSlider("颜色", "noise_color", 0, 100)
-        slider.valueChanged.connect(self._on_param_changed)
-        self.sliders["noise_color"] = slider
-        detail_layout.addWidget(slider)
-
-        layout.addWidget(detail_group)
+        detail_box.add_layout(detail_layout)
+        layout.addWidget(detail_box)
 
         # 重置按钮
         reset_btn = QPushButton("重置所有调整")
         reset_btn.clicked.connect(self.reset_edits)
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e0e0e0;
+                color: #333;
+                border: 1px solid #ccc;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+        """)
         layout.addWidget(reset_btn)
 
         layout.addStretch()

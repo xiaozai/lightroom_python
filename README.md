@@ -49,6 +49,8 @@
 |------|----------|------|
 | 阴影色相 | 0 ~ 360° | 为阴影区域添加色彩 |
 | 阴影饱和度 | 0 ~ 100 | 阴影颜色浓淡 |
+| 中间调色相 | 0 ~ 360° | 为中间调区域添加色彩 |
+| 中间调饱和度 | 0 ~ 100 | 中间调颜色浓淡 |
 | 高光色相 | 0 ~ 360° | 为高光区域添加色彩 |
 | 高光饱和度 | 0 ~ 100 | 高光颜色浓淡 |
 | 混合 | 0 ~ 100 | 控制色调区域过渡平滑度 |
@@ -87,6 +89,8 @@
 - 编辑后图像保存（全分辨率输出）
 - 参数重置功能
 - 快捷键支持
+- 可折叠编辑面板（点击面板标题折叠/展开）
+- 浅色主题界面
 
 ## 环境要求
 
@@ -108,7 +112,7 @@ conda activate lightroom
 ```bash
 conda create -n lightroom python=3.10
 conda activate lightroom
-conda install -c conda-forge pyqt pillow numpy scipy
+conda install -c conda-forge pyqt pillow numpy
 ```
 
 ### 2. 运行程序
@@ -182,7 +186,6 @@ lightroom_python/
 
 - **GUI 框架**: PyQt5
 - **图像处理**: Pillow (PIL), NumPy
-- **科学计算**: SciPy（用于高斯模糊等高级图像处理）
 
 ## 开发计划
 
