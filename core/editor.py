@@ -565,23 +565,7 @@ class ImageEditor:
         return img
 
     def _adjust_hsl(self, img: np.ndarray) -> np.ndarray:
-        """HSL调整 - 对8种颜色分别调整色相、饱和度、明度"""
-        # 将RGB转换为HSV进行处理
-        h, w, c = img.shape[:3]
-        img_flat = img[:, :, :3].reshape(-1, 3) / 255.0
-
-        # 定义颜色范围（色相角度）
-        color_ranges = {
-            'red': [(0, 15), (345, 360)],
-            'orange': [(15, 45)],
-            'yellow': [(45, 75)],
-            'green': [(75, 150)],
-            'cyan': [(150, 195)],
-            'blue': [(195, 255)],
-            'purple': [(255, 285)],
-            'magenta': [(285, 345)]
-        }
-
+        """HSL调整 - 对8种颜色分别调整色相、饱和度、明度（向量化优化版本）"""
         # HSL调整参数
         hsl_params = {
             'red': (self._params.hsl_hue_red, self._params.hsl_sat_red, self._params.hsl_lum_red),
@@ -603,39 +587,104 @@ class ImageEditor:
         if not has_hsl_adjustment:
             return img
 
-        # 转换到HSV空间
-        result = []
-        for pixel in img_flat:
-            r, g, b = pixel
-            h_val, s_val, v_val = colorsys.rgb_to_hsv(r, g, b)
-            h_deg = h_val * 360  # 转换为0-360度
+        # 向量化RGB到HSV转换
+        rgb = img[:, :, :3] / 255.0
+        r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
 
-            # 找出像素属于哪个颜色范围
-            for color_name, ranges in color_ranges.items():
-                for start, end in ranges:
-                    if start <= h_deg < end or (start > end and (h_deg >= start or h_deg < end)):
-                        hue_adj, sat_adj, lum_adj = hsl_params[color_name]
+        max_val = np.maximum(np.maximum(r, g), b)
+        min_val = np.minimum(np.minimum(r, g), b)
+        diff = max_val - min_val
 
-                        # 色相调整 (-100 到 +100 映射到 -30° 到 +30°)
-                        if hue_adj != 0:
-                            h_deg = (h_deg + hue_adj * 0.3) % 360
+        # 计算色相
+        h = np.zeros_like(max_val)
+        # 红色最大
+        mask = (max_val == r) & (diff > 0)
+        h[mask] = 60 * (((g[mask] - b[mask]) / diff[mask]) % 6)
+        # 绿色最大
+        mask = (max_val == g) & (diff > 0)
+        h[mask] = 60 * (((b[mask] - r[mask]) / diff[mask]) + 2)
+        # 蓝色最大
+        mask = (max_val == b) & (diff > 0)
+        h[mask] = 60 * (((r[mask] - g[mask]) / diff[mask]) + 4)
 
-                        # 饱和度调整
-                        if sat_adj != 0:
-                            s_val = np.clip(s_val * (1 + sat_adj / 100.0), 0, 1)
+        # 饱和度
+        s = np.where(max_val == 0, 0, diff / max_val)
+        # 明度
+        v = max_val
 
-                        # 明度调整
-                        if lum_adj != 0:
-                            v_val = np.clip(v_val * (1 + lum_adj / 200.0), 0, 1)
+        # 定义颜色范围并应用调整
+        color_ranges = [
+            ('red', [(0, 15), (345, 360)]),
+            ('orange', [(15, 45)]),
+            ('yellow', [(45, 75)]),
+            ('green', [(75, 150)]),
+            ('cyan', [(150, 195)]),
+            ('blue', [(195, 255)]),
+            ('purple', [(255, 285)]),
+            ('magenta', [(285, 345)])
+        ]
 
-                        break
+        for color_name, ranges in color_ranges:
+            hue_adj, sat_adj, lum_adj = hsl_params[color_name]
+            if hue_adj == 0 and sat_adj == 0 and lum_adj == 0:
+                continue
 
-            # 转回RGB
-            h_val = h_deg / 360.0
-            r_new, g_new, b_new = colorsys.hsv_to_rgb(h_val, s_val, v_val)
-            result.append([r_new * 255, g_new * 255, b_new * 255])
+            # 创建颜色蒙版
+            mask = np.zeros_like(h, dtype=bool)
+            for start, end in ranges:
+                if start < end:
+                    mask |= (h >= start) & (h < end)
+                else:
+                    mask |= (h >= start) | (h < end)
 
-        img[:, :, :3] = np.array(result).reshape(h, w, 3)
+            if not np.any(mask):
+                continue
+
+            # 色相调整
+            if hue_adj != 0:
+                h[mask] = (h[mask] + hue_adj * 0.3) % 360
+
+            # 饱和度调整
+            if sat_adj != 0:
+                s[mask] = np.clip(s[mask] * (1 + sat_adj / 100.0), 0, 1)
+
+            # 明度调整
+            if lum_adj != 0:
+                v[mask] = np.clip(v[mask] * (1 + lum_adj / 200.0), 0, 1)
+
+        # 向量化HSV到RGB转换
+        h_norm = h / 60.0
+        c = v * s
+        x = c * (1 - np.abs(h_norm % 2 - 1))
+        m = v - c
+
+        r_new = np.zeros_like(h)
+        g_new = np.zeros_like(h)
+        b_new = np.zeros_like(h)
+
+        # 0-60度
+        mask = (h_norm >= 0) & (h_norm < 1)
+        r_new[mask], g_new[mask], b_new[mask] = c[mask], x[mask], 0
+        # 60-120度
+        mask = (h_norm >= 1) & (h_norm < 2)
+        r_new[mask], g_new[mask], b_new[mask] = x[mask], c[mask], 0
+        # 120-180度
+        mask = (h_norm >= 2) & (h_norm < 3)
+        r_new[mask], g_new[mask], b_new[mask] = 0, c[mask], x[mask]
+        # 180-240度
+        mask = (h_norm >= 3) & (h_norm < 4)
+        r_new[mask], g_new[mask], b_new[mask] = 0, x[mask], c[mask]
+        # 240-300度
+        mask = (h_norm >= 4) & (h_norm < 5)
+        r_new[mask], g_new[mask], b_new[mask] = x[mask], 0, c[mask]
+        # 300-360度
+        mask = (h_norm >= 5) & (h_norm < 6)
+        r_new[mask], g_new[mask], b_new[mask] = c[mask], 0, x[mask]
+
+        img[:, :, 0] = (r_new + m) * 255
+        img[:, :, 1] = (g_new + m) * 255
+        img[:, :, 2] = (b_new + m) * 255
+
         return img
 
     def _adjust_color_grading(self, img: np.ndarray) -> np.ndarray:
@@ -737,12 +786,13 @@ class ImageEditor:
         pil_img = Image.fromarray(img.astype(np.uint8))
 
         # 使用UnsharpMask进行锐化
-        # percent 控制锐化强度
+        # radius 必须是整数
+        radius_int = max(1, int(round(radius)))
         percent = amount * 2  # 将0-150映射到更强的效果
         threshold = int(255 * (1 - detail / 100.0))  # detail越高，threshold越低
 
         sharpened = pil_img.filter(
-            ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold)
+            ImageFilter.UnsharpMask(radius=radius_int, percent=percent, threshold=threshold)
         )
 
         # 应用蒙版：只对边缘进行锐化
