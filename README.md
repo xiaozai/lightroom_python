@@ -124,6 +124,34 @@ python main.py
 
 或者在 Windows 上双击 `run.bat`
 
+### 3. 命令行使用（CLI）
+
+支持通过命令行批量处理图像：
+
+```bash
+# 基本用法
+python cli.py -i input.jpg -p params.json -o output.jpg
+
+# 完整参数名
+python cli.py --input input.jpg --param params.json --output output.jpg
+
+# 查看帮助
+python cli.py --help
+```
+
+参数 JSON 文件格式示例（参考 `sample_params.json`）：
+```json
+{
+  "exposure": 10,
+  "contrast": 15,
+  "highlights": -20,
+  "shadows": 30,
+  "temp": 5,
+  "saturation": 10,
+  "sharpen_amount": 50
+}
+```
+
 ## 使用说明
 
 ### 打开图像
@@ -162,7 +190,9 @@ python main.py
 
 ```
 lightroom_python/
-├── main.py              # 应用入口
+├── main.py              # 应用入口（GUI）
+├── cli.py               # 命令行接口
+├── sample_params.json   # 示例参数文件
 ├── environment.yml      # Conda 环境配置
 ├── requirements.txt     # pip 依赖
 ├── run.bat              # Windows 启动脚本
