@@ -714,10 +714,15 @@ class ImageEditor:
 
         # 应用混合
         if blending > 0:
-            blur_size = int(blending * 10) + 1
-            from scipy.ndimage import gaussian_filter
-            shadows_mask = gaussian_filter(shadows_mask, sigma=blur_size)
-            highlights_mask = gaussian_filter(highlights_mask, sigma=blur_size)
+            blur_size = max(1, int(blending * 5))
+            # 使用 PIL 高斯模糊替代 scipy
+            from PIL import Image as PILImage
+            shadows_pil = PILImage.fromarray((shadows_mask * 255).astype(np.uint8))
+            highlights_pil = PILImage.fromarray((highlights_mask * 255).astype(np.uint8))
+            shadows_blurred = shadows_pil.filter(ImageFilter.GaussianBlur(radius=blur_size))
+            highlights_blurred = highlights_pil.filter(ImageFilter.GaussianBlur(radius=blur_size))
+            shadows_mask = np.array(shadows_blurred).astype(np.float32) / 255.0
+            highlights_mask = np.array(highlights_blurred).astype(np.float32) / 255.0
             midtones_mask = np.clip(1 - shadows_mask - highlights_mask, 0, 1)
 
         # 应用平衡
@@ -797,12 +802,33 @@ class ImageEditor:
 
         # 应用蒙版：只对边缘进行锐化
         if masking > 0:
-            # 计算边缘蒙版
+            # 计算边缘蒙版 - 使用简单的拉普拉斯卷积核
             gray = np.array(pil_img.convert('L')).astype(np.float32)
-            # 使用拉普拉斯算子检测边缘
-            from scipy.ndimage import laplace
-            edges = np.abs(laplace(gray))
+
+            # 手动实现拉普拉斯算子 (3x3 卷积核)
+            laplacian_kernel = np.array([
+                [0, 1, 0],
+                [1, -4, 1],
+                [0, 1, 0]
+            ])
+
+            # 使用卷积计算边缘
+            from numpy.lib.stride_tricks import as_strided
+            h, w = gray.shape
+            kh, kw = laplacian_kernel.shape
+
+            # Pad the image
+            padded = np.pad(gray, ((1, 1), (1, 1)), mode='edge')
+
+            # Create view for convolution
+            shape = (h, w, kh, kw)
+            strides = padded.strides * 2
+            windows = as_strided(padded, shape=shape, strides=strides)
+
+            # Apply convolution
+            edges = np.abs(np.sum(windows * laplacian_kernel, axis=(2, 3)))
             edge_mask = np.clip(edges / (edges.max() + 1e-6), 0, 1)
+
             # 根据masking参数调整蒙版
             edge_mask = np.power(edge_mask, 2 - masking / 50.0)
             edge_mask = np.stack([edge_mask] * 3, axis=2)
