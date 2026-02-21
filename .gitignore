@@ -1,7 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.py.class
 *.so
 .Python
 build/
@@ -17,8 +17,8 @@ sdist/
 var/
 wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+installed.cfg
 
 # PyInstaller
 *.spec
@@ -26,8 +26,8 @@ wheels/
 # Virtual environments
 .env
 .venv
-env/
 venv/
+venv-bundle/
 ENV/
 
 # IDE
@@ -35,12 +35,6 @@ ENV/
 .vscode/
 *.swp
 *.swo
-
-# Test outputs
-test_output.jpg
-test_combined_output.jpg
-test_preset.json
-test_combined_preset.json
 
 # OS
 .DS_Store
