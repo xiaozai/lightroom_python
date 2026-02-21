@@ -392,63 +392,137 @@ class ImageEditor:
         return Image.fromarray(img_array.astype(np.uint8))
 
     def _adjust_highlights(self, img: np.ndarray, value: float) -> np.ndarray:
-        """调整高光"""
-        # 找出高光区域（亮度 > 128）
+        """调整高光 - 参考 monetGPT 的平滑遮罩实现"""
+        if value == 0:
+            return img
+
+        # 计算亮度
         luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
-        highlight_mask = np.clip((luminance - 128) / 127, 0, 1)
+        L = luminance / 255.0  # 归一化到 [0, 1]
 
-        # 创建调整因子
-        factor = value / 100.0
-        adjustment = 1 - factor * highlight_mask
+        # 使用 smoothstep 创建平滑的高光遮罩 (0.35 到 1.0)
+        # 平滑过渡，避免硬边缘
+        def smoothstep(x, edge0, edge1):
+            t = np.clip((x - edge0) / (edge1 - edge0 + 1e-8), 0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
 
-        img[:, :, :3] = img[:, :, :3] * adjustment[:, :, np.newaxis]
+        # 高光遮罩：影响亮度在 0.35 到 1.0 范围的区域
+        highlight_mask = smoothstep(L, 0.35, 1.0)
+
+        factor = value / 100.0 * 0.3  # 缩放因子
+
+        # 计算调整后的亮度
+        L_adjusted = L + factor * highlight_mask * 0.5
+
+        # 避免除零
+        eps = 1e-8
+        ratio = L_adjusted / (L + eps)
+
+        # 应用到RGB通道
+        img[:, :, 0] = img[:, :, 0] * ratio
+        img[:, :, 1] = img[:, :, 1] * ratio
+        img[:, :, 2] = img[:, :, 2] * ratio
+
         return img
 
     def _adjust_shadows(self, img: np.ndarray, value: float) -> np.ndarray:
-        """调整阴影"""
-        # 找出阴影区域（亮度 < 128）
+        """调整阴影 - 参考 monetGPT 的平滑遮罩实现"""
+        if value == 0:
+            return img
+
+        # 计算亮度
         luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
-        shadow_mask = np.clip((128 - luminance) / 128, 0, 1)
+        L = luminance / 255.0  # 归一化到 [0, 1]
 
-        # 创建调整因子
-        factor = value / 100.0
-        adjustment = 1 + factor * shadow_mask
+        # 使用 smoothstep 创建平滑的阴影遮罩
+        def smoothstep(x, edge0, edge1):
+            t = np.clip((x - edge0) / (edge1 - edge0 + 1e-8), 0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
 
-        img[:, :, :3] = img[:, :, :3] * adjustment[:, :, np.newaxis]
+        # 创建遮罩：0 在暗部，1 在亮部
+        # 反转以获得阴影遮罩
+        shadow_mask = 1.0 - smoothstep(L, 0.0, 0.65)
+
+        factor = value / 100.0 * 0.1  # 缩放因子
+
+        # 计算调整后的亮度
+        L_adjusted = L + factor * shadow_mask * 0.5
+
+        # 避免除零
+        eps = 1e-8
+        ratio = L_adjusted / (L + eps)
+
+        # 应用到RGB通道
+        img[:, :, 0] = img[:, :, 0] * ratio
+        img[:, :, 1] = img[:, :, 1] * ratio
+        img[:, :, 2] = img[:, :, 2] * ratio
+
         return img
 
     def _adjust_whites(self, img: np.ndarray, value: float) -> np.ndarray:
-        """调整白色色阶（白场）"""
-        factor = value / 100.0
-        # 调整最亮区域
+        """调整白色色阶（白场）- 参考 monetGPT 实现"""
+        if value == 0:
+            return img
+
+        factor = value / 100.0 * 0.3
+
+        # 计算亮度
         luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
-        bright_mask = np.clip((luminance - 200) / 55, 0, 1)
+        L = luminance / 255.0
 
-        if factor > 0:
-            # 增加白色：向255推进
-            adjustment = 255 - (255 - img[:, :, :3]) * (1 - factor * bright_mask[:, :, np.newaxis])
-        else:
-            # 减少白色：压暗高光
-            adjustment = img[:, :, :3] * (1 + factor * bright_mask[:, :, np.newaxis])
+        # 使用平滑遮罩 (0.65 到 1.0)
+        def smoothstep(x, edge0, edge1):
+            t = np.clip((x - edge0) / (edge1 - edge0 + 1e-8), 0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
 
-        img[:, :, :3] = adjustment
+        whites_mask = smoothstep(L, 0.65, 1.0)
+
+        # 调整亮度
+        L_adjusted = L + factor * whites_mask * 0.5
+
+        eps = 1e-8
+        ratio = L_adjusted / (L + eps)
+
+        img[:, :, 0] = img[:, :, 0] * ratio
+        img[:, :, 1] = img[:, :, 1] * ratio
+        img[:, :, 2] = img[:, :, 2] * ratio
+
         return img
 
     def _adjust_blacks(self, img: np.ndarray, value: float) -> np.ndarray:
-        """调整黑色色阶（黑场）"""
+        """调整黑色色阶（黑场）- 参考 monetGPT 实现"""
+        if value == 0:
+            return img
+
         factor = value / 100.0
-        # 调整最暗区域
+
+        # 计算亮度
         luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
-        dark_mask = np.clip((50 - luminance) / 50, 0, 1)
+        L = luminance / 255.0
 
+        # 使用平滑遮罩 (0.0 到 0.3)
+        def smoothstep(x, edge0, edge1):
+            t = np.clip((x - edge0) / (edge1 - edge0 + 1e-8), 0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
+
+        # 黑色遮罩：亮度越低，影响越大
+        blacks_mask = 1.0 - smoothstep(L, 0.0, 0.3)
+
+        # 调整
         if factor > 0:
-            # 提升黑色：向更亮推进
-            adjustment = img[:, :, :3] + factor * dark_mask[:, :, np.newaxis] * 50
+            # 提升黑色
+            L_adjusted = L + factor * blacks_mask * 0.15
         else:
-            # 加深黑色：向0推进
-            adjustment = img[:, :, :3] * (1 + factor * dark_mask[:, :, np.newaxis])
+            # 加深黑色
+            L_adjusted = L + factor * blacks_mask * 0.1
 
-        img[:, :, :3] = adjustment
+        eps = 1e-8
+        ratio = L_adjusted / (L + eps)
+
+        img[:, :, 0] = img[:, :, 0] * ratio
+        img[:, :, 1] = img[:, :, 1] * ratio
+        img[:, :, 2] = img[:, :, 2] * ratio
+
         return img
 
     def _adjust_texture(self, img: np.ndarray, value: float, is_rgba: bool) -> np.ndarray:
@@ -519,32 +593,62 @@ class ImageEditor:
         return img
 
     def _adjust_vibrance(self, img: np.ndarray, value: float) -> np.ndarray:
-        """鲜艳度调整（智能饱和度）"""
-        factor = value / 100.0
-
-        if factor == 0:
+        """鲜艳度调整（智能饱和度）- 参考 monetGPT 实现"""
+        if value == 0:
             return img
 
-        # 计算每个像素的饱和度
-        max_val = np.max(img[:, :, :3], axis=2)
-        min_val = np.min(img[:, :, :3], axis=2)
-        current_sat = (max_val - min_val) / (max_val + 1e-6)
+        factor = value / 100.0
 
-        # 饱和度较低的像素获得更强的调整
-        sat_weight = 1 - current_sat
+        # 转换为HSV空间
+        rgb_img = Image.fromarray(img.astype(np.uint8))
+        hsv_img = rgb_img.convert('HSV')
+        hsv_array = np.array(hsv_img).astype(np.float32)
 
-        # 应用调整
-        if factor > 0:
-            adjustment = factor * sat_weight * 0.5
+        # 分离 H, S, V 通道
+        H = hsv_array[:, :, 0].astype(np.float32)
+        S = hsv_array[:, :, 1].astype(np.float32)
+        V = hsv_array[:, :, 2].astype(np.float32)
+
+        # 归一化到 [0, 1]
+        S_norm = S / 255.0
+        V_norm = V / 255.0
+        H_norm = H / 179.0  # HSV H 通道是 0-179
+
+        # 计算高斯权重（饱和度和明度中心化）
+        mean = 0.45
+        sigma_s = 0.2
+        sigma_v = 0.2
+
+        w_s = np.exp(-((S_norm - mean) ** 2) / (2 * sigma_s ** 2))
+        w_v = np.exp(-((V_norm - mean) ** 2) / (2 * sigma_v ** 2))
+        weight = w_s * w_v
+
+        # 肤色保护：降低肤色区域的鲜艳度调整
+        # 典型肤色 hue ~10-50 (在 0-179 范围内约为 0.06-0.28)
+        mean_h_skin = 0.08
+        sigma_h = 0.05
+        w_h = 1 - np.exp(-((H_norm - mean_h_skin) ** 2) / (2 * sigma_h ** 2))
+
+        # 组合所有权重
+        weight_total = weight * w_h
+
+        # 应用鲜艳度调整
+        if factor >= 0:
+            # 增加鲜艳度：低饱和度区域获得更多调整
+            S_new = S_norm + factor * (1 - S_norm) * weight_total
         else:
-            adjustment = factor * current_sat * 0.5
+            # 减少鲜艳度：按比例减少
+            S_new = S_norm * (1 + factor * weight_total)
 
-        # 调整饱和度
-        mean = (max_val + min_val) / 2
-        for i in range(3):
-            img[:, :, i] = mean + (img[:, :, i] - mean) * (1 + adjustment)
+        S_new = np.clip(S_new, 0, 1) * 255.0
 
-        return img
+        # 合并通道
+        hsv_array[:, :, 1] = S_new.astype(np.uint8)
+
+        # 转换回RGB
+        result_img = Image.fromarray(hsv_array.astype(np.uint8), mode='HSV').convert('RGB')
+
+        return np.array(result_img).astype(np.float32)
 
     def _adjust_saturation(self, img: np.ndarray, factor: float) -> np.ndarray:
         """饱和度调整"""
@@ -568,29 +672,51 @@ class ImageEditor:
         if temp == 0 and tint == 0:
             return img
 
-        # 色温调整：正值偏黄/暖，负值偏蓝/冷
+        # 色调（Tint）调整 - 更精确的绿色/洋红平衡
+        if tint != 0:
+            intensity = tint / 150.0
+
+            # 放大效果
+            intensity = intensity * 1.4
+
+            # 使用RGB调整模拟Lab的调整（更精确的色调控制）
+            if intensity >= 0:
+                # 偏洋红：增强红和蓝通道，减弱绿通道
+                r_factor = 1.0 + intensity * 0.02
+                g_factor = 1.0 - intensity * 0.03
+                b_factor = 1.0 + intensity * 0.01
+            else:
+                # 偏绿（荧光绿）：增强绿通道
+                abs_i = abs(intensity)
+                r_factor = 1.0 - abs_i * 0.02
+                g_factor = 1.0 + abs_i * 0.05
+                b_factor = 1.0 - abs_i * 0.03
+
+            img[:, :, 0] *= r_factor
+            img[:, :, 1] *= g_factor
+            img[:, :, 2] *= b_factor
+
+            # 可选的颜色平衡微调
+            if tint < 0:
+                # 绿色调时稍提亮
+                img[:, :3] += abs(tint / 150) * 3
+            elif tint > 0:
+                # 洋红色调的明亮度微调
+                img[:, :3] -= tint / 150 * 2
+
+        # 色温（Temperature）调整
         if temp != 0:
             factor = temp / 100.0
             # 蓝色通道（冷）vs 红色通道（暖）
             if factor > 0:
                 # 变暖：增加红色，减少蓝色
-                img[:, :, 0] = img[:, :, 0] * (1 + factor * 0.1)
-                img[:, :, 2] = img[:, :, 2] * (1 - factor * 0.05)
+                img[:, :, 0] = img[:, :, 0] * (1 + factor * 0.08)
+                img[:, :, 2] = img[:, :, 2] * (1 - factor * 0.06)
             else:
                 # 变冷：减少红色，增加蓝色
-                img[:, :, 0] = img[:, :, 0] * (1 + factor * 0.05)
-                img[:, :, 2] = img[:, :, 2] * (1 - factor * 0.1)
-
-        # 色调调整：正值偏洋红，负值偏绿
-        if tint != 0:
-            factor = tint / 150.0
-            # 绿色通道 vs 红+蓝通道
-            if factor > 0:
-                # 偏洋红：减少绿色
-                img[:, :, 1] = img[:, :, 1] * (1 - factor * 0.1)
-            else:
-                # 偏绿：增加绿色
-                img[:, :, 1] = img[:, :, 1] * (1 - factor * 0.1)
+                abs_factor = abs(factor)
+                img[:, :, 0] = img[:, :, 0] * (1 - abs_factor * 0.06)
+                img[:, :, 2] = img[:, :, 2] * (1 + abs_factor * 0.08)
 
         return img
 
