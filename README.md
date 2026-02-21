@@ -130,9 +130,16 @@
 - Python 3.10+
 - Conda（推荐）
 
-## 安装步骤
+## 快速开始
 
-### 1. 创建 Conda 环境
+### 方式一：下载可执行文件（Windows）
+
+1. 从 [Releases](../../releases) 页面下载 `LightroomPython.exe`
+2. 双击运行即可使用
+
+### 方式二：使用源码运行
+
+#### 1. 创建 Conda 环境
 
 ```bash
 # 创建并激活环境
@@ -148,7 +155,7 @@ conda activate lightroom
 conda install -c conda-forge pyqt pillow numpy scipy
 ```
 
-### 2. 运行程序
+#### 2. 运行程序
 
 ```bash
 cd lightroom_python
@@ -266,28 +273,30 @@ python cli.py --help
 
 ```
 lightroom_python/
-├── main.py              # 应用入口（GUI）
-├── cli.py               # 命令行接口
-├── sample_params.json   # 示例参数文件
-├── full_preset.json     # 全量参数预设文件
-├── environment.yml      # Conda 环境配置
-├── requirements.txt     # pip 依赖
-├── run.bat              # Windows 启动脚本
-├── setup_env.bat        # 环境安装脚本（Windows）
-├── setup_env.sh         # 环境安装脚本（Linux/Mac）
+├── main.py                # 应用入口（GUI）
+├── cli.py                 # 命令行接口
+├── README.md              # 项目文档
+├── environment.yml        # Conda 环境配置
+├── requirements.txt       # pip 依赖
+├── run.bat                # Windows 启动脚本
+├── setup_env.bat          # Windows 环境安装脚本
+├── setup_env.sh           # Linux/Mac 环境安装脚本
 ├── ui/
 │   ├── __init__.py
-│   ├── main_window.py   # 主窗口 UI
-│   └── curve_widget.py  # 色调曲线控件
+│   ├── main_window.py     # 主窗口 UI
+│   └── curve_widget.py    # 色调曲线控件
 ├── core/
 │   ├── __init__.py
-│   └── editor.py        # 图像编辑核心功能
+│   └── editor.py          # 图像编辑核心功能
 ├── utils/
 │   ├── __init__.py
-│   └── file_utils.py    # 文件操作工具
-└── tests/
-    ├── __init__.py
-    └── test_features.py # 功能测试脚本
+│   └── file_utils.py      # 文件操作工具
+├── docs/
+│   └── full_preset.json   # 全量参数预设文件
+└── dist/                   # 发布文件（由 PyInstaller 生成）
+    ├── LightroomPython.exe # Windows 可执行文件
+    ├── LightroomPython.spec
+    └── RELEASE_NOTES.txt
 ```
 
 ## 技术栈
@@ -321,6 +330,8 @@ lightroom_python/
 - [x] 颜色面板（白平衡、HSL、颜色分级）
 - [x] 细节面板（锐化、降噪）
 - [x] 色调曲线面板
+- [x] 命令行接口(CLI)
+- [x] Windows 可执行文件
 - [ ] 裁剪工具
 - [ ] 局部调整（画笔/渐变滤镜）
 - [ ] 批量处理
