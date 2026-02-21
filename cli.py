@@ -63,8 +63,19 @@ def main():
     "sharpen_detail": 25,
     "sharpen_masking": 0,
     "noise_luminance": 10,
-    "noise_color": 10
+    "noise_color": 10,
+    "curve_rgb": [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
+    "curve_red": [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
+    "curve_green": [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
+    "curve_blue": [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
+    "curve_saturation": 0
   }
+
+说明:
+  - curve_*: 色调曲线控制点，每个点是 [x, y] 坐标，范围 0-255
+  - curve_rgb: RGB复合曲线
+  - curve_red/green/blue: 分通道曲线
+  - curve_saturation: 曲线饱和度调整 (-100 到 100)
         '''
     )
 

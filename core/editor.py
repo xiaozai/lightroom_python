@@ -1014,5 +1014,10 @@ class ImageEditor:
         """从字典设置参数（用于导入）"""
         for key, value in params.items():
             if hasattr(self._params, key):
+                # 处理曲线参数：将列表的列表转换为元组的列表
+                if key.startswith('curve_') and key != 'curve_saturation':
+                    if isinstance(value, list):
+                        # 将 [[x, y], [x, y], ...] 转换为 [(x, y), (x, y), ...]
+                        value = [tuple(point) if isinstance(point, list) else point for point in value]
                 setattr(self._params, key, value)
         self._cache_valid = False

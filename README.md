@@ -2,12 +2,15 @@
 
 一个基于 Python 的 Lightroom 风格图像编辑工具，支持非破坏性编辑。
 
+![界面截图](docs/images/screenshot.png)
+
 ## 功能特性
 
 - 非破坏性编辑：永远不修改原始文件，通过参数栈实时计算效果
 - 支持 JPG、PNG、BMP、TIFF 等常见图像格式
 - 实时预览编辑效果
 - 预设导入/导出功能
+- 命令行批量处理支持
 
 ## 已实现功能模块
 
@@ -20,6 +23,20 @@
 | 阴影 | -100 ~ +100 | 调整画面中最暗的部分 |
 | 白色色阶 | -100 ~ +100 | 调整图像最亮端的极限值 |
 | 黑色色阶 | -100 ~ +100 | 调整图像最暗端的极限值 |
+
+### 色调曲线面板 (Tone Curve Panel) ✅
+| 功能 | 说明 |
+|------|------|
+| RGB 复合曲线 | 对整体亮度进行调整 |
+| 分通道曲线 | 独立调整红、绿、蓝三个通道 |
+| 曲线饱和度 | 调整曲线应用时的颜色饱和度 |
+| 直方图显示 | 在曲线编辑器背景显示图像直方图 |
+
+曲线编辑器支持：
+- 拖动控制点调整曲线形状
+- 双击空白处添加新控制点
+- 双击控制点删除（端点除外）
+- 三次样条插值实现平滑曲线
 
 ### 效果调整面板 (Effects Panel) ✅
 | 功能 | 参数范围 | 说明 |
@@ -49,8 +66,6 @@
 |------|----------|------|
 | 阴影色相 | 0 ~ 360° | 为阴影区域添加色彩 |
 | 阴影饱和度 | 0 ~ 100 | 阴影颜色浓淡 |
-| 中间调色相 | 0 ~ 360° | 为中间调区域添加色彩 |
-| 中间调饱和度 | 0 ~ 100 | 中间调颜色浓淡 |
 | 高光色相 | 0 ~ 360° | 为高光区域添加色彩 |
 | 高光饱和度 | 0 ~ 100 | 高光颜色浓淡 |
 | 混合 | 0 ~ 100 | 控制色调区域过渡平滑度 |
@@ -112,7 +127,7 @@ conda activate lightroom
 ```bash
 conda create -n lightroom python=3.10
 conda activate lightroom
-conda install -c conda-forge pyqt pillow numpy
+conda install -c conda-forge pyqt pillow numpy scipy
 ```
 
 ### 2. 运行程序
@@ -139,18 +154,54 @@ python cli.py --input input.jpg --param params.json --output output.jpg
 python cli.py --help
 ```
 
-参数 JSON 文件格式示例（参考 `sample_params.json`）：
+## 参数 JSON 文件格式
+
 ```json
 {
   "exposure": 10,
   "contrast": 15,
-  "highlights": -20,
+  "highlights": -25,
   "shadows": 30,
-  "temp": 5,
+  "whites": 10,
+  "blacks": -15,
+  "texture": 25,
+  "clarity": 20,
+  "dehaze": 15,
+  "vibrance": 20,
   "saturation": 10,
-  "sharpen_amount": 50
+  "temp": 8,
+  "tint": 5,
+  "hsl_hue_red": 3,
+  "hsl_sat_red": 10,
+  "hsl_lum_red": -5,
+  "cg_shadows_hue": 230,
+  "cg_shadows_sat": 25,
+  "cg_highlights_hue": 45,
+  "cg_highlights_sat": 20,
+  "cg_blending": 50,
+  "cg_balance": 10,
+  "sharpen_amount": 60,
+  "sharpen_radius": 1.0,
+  "sharpen_detail": 30,
+  "sharpen_masking": 20,
+  "noise_luminance": 15,
+  "noise_color": 10,
+  "curve_rgb": [[0, 0], [64, 70], [128, 128], [192, 180], [255, 255]],
+  "curve_red": [[0, 0], [64, 64], [128, 130], [192, 192], [255, 255]],
+  "curve_green": [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
+  "curve_blue": [[0, 0], [64, 66], [128, 126], [192, 192], [255, 255]],
+  "curve_saturation": 10
 }
 ```
+
+### 曲线参数说明
+
+曲线参数格式为控制点数组 `[[x1, y1], [x2, y2], ...]`，每个点的 x, y 范围为 0-255：
+- `curve_rgb`: RGB 复合曲线
+- `curve_red`: 红色通道曲线
+- `curve_green`: 绿色通道曲线
+- `curve_blue`: 蓝色通道曲线
+- `curve_saturation`: 曲线饱和度调整 (-100 到 100)
 
 ## 使用说明
 
@@ -162,6 +213,13 @@ python cli.py --help
 - 在右侧编辑面板调整各项参数
 - 参数调整会实时反映在图像预览中
 - 所有编辑均为非破坏性，可随时重置
+
+### 色调曲线使用
+1. 选择要编辑的通道（RGB/红/绿/蓝）
+2. 拖动曲线上的控制点调整曲线形状
+3. 双击曲线空白处添加新控制点
+4. 双击控制点删除（端点不可删除）
+5. 使用"调整饱和度"滑块控制曲线效果的色彩饱和度
 
 ### 保存图像
 - 点击菜单 `文件 -> 保存` 或工具栏 `保存` 按钮
@@ -186,6 +244,23 @@ python cli.py --help
 | Ctrl+E | 导出预设 |
 | Ctrl+Q | 退出程序 |
 
+## 效果展示
+
+### 原图 vs 编辑后
+
+| 原图 | 编辑后 |
+|:----:|:------:|
+| ![原图](docs/images/test_original.jpg) | ![编辑后](docs/images/test_output.jpg) |
+
+### 编辑参数（full_preset.json）
+
+上面的效果使用了以下参数：
+- 曝光 +10, 对比度 +15
+- 高光 -25, 阴影 +30
+- 纹理 +25, 清晰度 +20
+- S型曲线增强对比度
+- 颜色分级：阴影偏蓝，高光偏暖
+
 ## 项目结构
 
 ```
@@ -193,6 +268,7 @@ lightroom_python/
 ├── main.py              # 应用入口（GUI）
 ├── cli.py               # 命令行接口
 ├── sample_params.json   # 示例参数文件
+├── full_preset.json     # 全量参数预设文件
 ├── environment.yml      # Conda 环境配置
 ├── requirements.txt     # pip 依赖
 ├── run.bat              # Windows 启动脚本
@@ -200,7 +276,8 @@ lightroom_python/
 ├── setup_env.sh         # 环境安装脚本（Linux/Mac）
 ├── ui/
 │   ├── __init__.py
-│   └── main_window.py   # 主窗口 UI
+│   ├── main_window.py   # 主窗口 UI
+│   └── curve_widget.py  # 色调曲线控件
 ├── core/
 │   ├── __init__.py
 │   └── editor.py        # 图像编辑核心功能
@@ -216,11 +293,16 @@ lightroom_python/
 
 - **GUI 框架**: PyQt5
 - **图像处理**: Pillow (PIL), NumPy
+- **曲线插值**: SciPy (Cubic Spline)
 
 ## 开发计划
 
+- [x] 基本调整面板
+- [x] 效果调整面板
+- [x] 颜色面板（白平衡、HSL、颜色分级）
+- [x] 细节面板（锐化、降噪）
+- [x] 色调曲线面板
 - [ ] 裁剪工具
-- [ ] 曲线调整
 - [ ] 局部调整（画笔/渐变滤镜）
 - [ ] 批量处理
 - [ ] RAW 格式支持
