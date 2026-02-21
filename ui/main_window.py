@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt, QSize, pyqtSignal, QParallelAnimationGroup, QProper
 import sys
 import os
 import json
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.editor import ImageEditor
@@ -19,6 +20,7 @@ from utils.file_utils import (
     get_save_filters,
     get_file_extension
 )
+from ui.curve_widget import CurvePanel
 
 
 class CollapsibleBox(QWidget):
@@ -320,6 +322,24 @@ class MainWindow(QMainWindow):
         basic_box.add_layout(basic_layout)
         layout.addWidget(basic_box)
 
+        # ==================== 色调曲线面板 ====================
+        curve_box = CollapsibleBox("色调曲线")
+        curve_layout = QVBoxLayout()
+
+        # 曲线编辑面板
+        self.curve_panel = CurvePanel()
+        self.curve_panel.valueChanged.connect(self._on_curve_changed)
+        curve_layout.addWidget(self.curve_panel)
+
+        # 曲线饱和度滑块
+        curve_sat_slider = EditSlider("调整饱和度", "curve_saturation", -100, 100)
+        curve_sat_slider.valueChanged.connect(self._on_param_changed)
+        self.sliders["curve_saturation"] = curve_sat_slider
+        curve_layout.addWidget(curve_sat_slider)
+
+        curve_box.add_layout(curve_layout)
+        layout.addWidget(curve_box)
+
         # ==================== 效果调整面板 ====================
         effects_box = CollapsibleBox("效果调整")
         effects_layout = QVBoxLayout()
@@ -520,6 +540,16 @@ class MainWindow(QMainWindow):
         self.editor.set_param(actual_param, value)
         self._update_display()
 
+    def _on_curve_changed(self, param_name: str, points: list):
+        """曲线参数变化时处理"""
+        if self._updating_image:
+            return
+
+        # param_name 格式: 'curve_rgb', 'curve_red', 'curve_green', 'curve_blue'
+        channel = param_name.replace('curve_', '')
+        self.editor.set_curve_param(channel, points)
+        self._update_display()
+
     def _update_hsl_sliders(self):
         """更新HSL滑块显示当前选中颜色的值"""
         color_idx = self.hsl_color_combo.currentIndex()
@@ -570,9 +600,13 @@ class MainWindow(QMainWindow):
         if file_path:
             try:
                 self.editor.load_image(file_path)
+                # 更新曲线面板的直方图
+                self._update_curve_histogram()
                 self._display_image()
                 self.statusBar().showMessage(f"已加载: {file_path}")
                 self._reset_sliders()
+                # 重置曲线面板
+                self.curve_panel.reset_curves()
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"无法加载图片: {e}")
 
@@ -705,8 +739,37 @@ class MainWindow(QMainWindow):
 
             # 更新HSL滑块
             self._update_hsl_sliders()
+
+            # 更新曲线面板
+            for channel in ['rgb', 'red', 'green', 'blue']:
+                curve_points = self.editor.get_curve_param(channel)
+                self.curve_panel.set_curve(channel, curve_points)
         finally:
             self._updating_image = False
+
+    def _update_curve_histogram(self):
+        """更新曲线面板的直方图"""
+        if not self.editor.has_image():
+            return
+
+        # 获取预览图像
+        img = self.editor.get_original()
+        if img is None:
+            return
+
+        # 转换为numpy数组
+        img_array = np.array(img.convert('RGB'))
+
+        # 计算RGB通道的直方图
+        hist_r = np.histogram(img_array[:, :, 0], bins=256, range=(0, 256))[0]
+        hist_g = np.histogram(img_array[:, :, 1], bins=256, range=(0, 256))[0]
+        hist_b = np.histogram(img_array[:, :, 2], bins=256, range=(0, 256))[0]
+
+        # 合并RGB直方图
+        histogram = np.column_stack([hist_r, hist_g, hist_b])
+
+        # 更新曲线面板
+        self.curve_panel.set_histogram(histogram)
 
     def resizeEvent(self, event):
         """窗口大小改变时重新显示图像"""

@@ -81,6 +81,16 @@ class EditParams:
     noise_luminance: float = 0.0    # 0-100
     noise_color: float = 0.0        # 0-100
 
+    # 色调曲线参数
+    # RGB复合曲线 (控制点列表，每个点是(x,y)元组，x和y范围0-255)
+    curve_rgb: list = field(default_factory=lambda: [(0, 0), (64, 64), (128, 128), (192, 192), (255, 255)])
+    # 分通道曲线
+    curve_red: list = field(default_factory=lambda: [(0, 0), (64, 64), (128, 128), (192, 192), (255, 255)])
+    curve_green: list = field(default_factory=lambda: [(0, 0), (64, 64), (128, 128), (192, 192), (255, 255)])
+    curve_blue: list = field(default_factory=lambda: [(0, 0), (64, 64), (128, 128), (192, 192), (255, 255)])
+    # 曲线饱和度调整
+    curve_saturation: float = 0.0  # -100 到 +100
+
 
 class ImageEditor:
     """图像编辑器类 - 支持非破坏性编辑"""
@@ -200,6 +210,23 @@ class ImageEditor:
     def get_all_params(self) -> EditParams:
         """获取所有参数"""
         return self._params
+
+    def set_curve_param(self, channel: str, points: list):
+        """设置曲线参数
+
+        Args:
+            channel: 通道名称 ('rgb', 'red', 'green', 'blue')
+            points: 控制点列表 [(x1, y1), (x2, y2), ...]
+        """
+        param_name = f'curve_{channel}'
+        if hasattr(self._params, param_name):
+            setattr(self._params, param_name, points)
+            self._cache_valid = False
+
+    def get_curve_param(self, channel: str) -> list:
+        """获取曲线参数"""
+        param_name = f'curve_{channel}'
+        return getattr(self._params, param_name, [])
 
     def _apply_edits_fullres(self) -> Image.Image:
         """应用所有编辑效果到原始图像（全分辨率，用于保存）"""
@@ -355,6 +382,9 @@ class ImageEditor:
 
         # 16. 降噪调整
         img_array = self._adjust_noise_reduction(img_array)
+
+        # 17. 色调曲线调整
+        img_array = self._adjust_tone_curve(img_array)
 
         # 裁剪值到有效范围
         img_array[:, :, :3] = np.clip(img_array[:, :, :3], 0, 255)
@@ -871,6 +901,107 @@ class ImageEditor:
             # 减少颜色差异
             factor = 1 - color_noise / 100.0 * 0.5
             img[:, :, :3] = mean_color + color_diff * factor
+
+        return img
+
+    def _build_curve_lut(self, points: list, size: int = 256) -> np.ndarray:
+        """构建曲线查找表（LUT）使用三次样条插值
+
+        Args:
+            points: 控制点列表 [(x1, y1), (x2, y2), ...]，x和y都在0-255范围内
+            size: LUT大小，默认256
+
+        Returns:
+            查找表数组，长度为size
+        """
+        # 确保控制点按x排序
+        points = sorted(points, key=lambda p: p[0])
+
+        # 提取x和y坐标
+        x_vals = np.array([p[0] for p in points], dtype=np.float32)
+        y_vals = np.array([p[1] for p in points], dtype=np.float32)
+
+        # 创建输入数组（0-255）
+        lut_input = np.arange(size, dtype=np.float32)
+
+        # 使用三次样条插值
+        from scipy.interpolate import CubicSpline
+        cs = CubicSpline(x_vals, y_vals, bc_type='natural', extrapolate=True)
+
+        # 计算LUT
+        lut = cs(lut_input)
+
+        # 裁剪到有效范围
+        lut = np.clip(lut, 0, 255)
+
+        return lut.astype(np.float32)
+
+    def _adjust_tone_curve(self, img: np.ndarray) -> np.ndarray:
+        """色调曲线调整"""
+        # 检查是否有曲线调整
+        has_curve_edits = (
+            self._params.curve_saturation != 0 or
+            any(p != q for p, q in self._params.curve_rgb for p, q in [(0, 0), (255, 255)])
+        )
+
+        # 检查RGB曲线是否不是默认直线
+        if len(self._params.curve_rgb) >= 2:
+            # 检查是否有任何控制点偏移
+            for x, y in self._params.curve_rgb:
+                if x != y:
+                    has_curve_edits = True
+                    break
+
+        # 检查分通道曲线
+        def _is_default_curve(points):
+            # 默认直线: (0,0), (64,64), (128,128), (192,192), (255,255)
+            default = [(0, 0), (64, 64), (128, 128), (192, 192), (255, 255)]
+            for point, default_point in zip(sorted(points, key=lambda p: p[0]), default):
+                if point[0] != default_point[0] or point[1] != default_point[1]:
+                    return False
+            return True
+
+        if not has_curve_edits:
+            if not _is_default_curve(self._params.curve_red):
+                has_curve_edits = True
+            elif not _is_default_curve(self._params.curve_green):
+                has_curve_edits = True
+            elif not _is_default_curve(self._params.curve_blue):
+                has_curve_edits = True
+
+        if not has_curve_edits:
+            return img
+
+        # 构建RGB复合曲线LUT
+        rgb_lut = self._build_curve_lut(self._params.curve_rgb)
+
+        # 构建分通道曲线LUT
+        red_lut = self._build_curve_lut(self._params.curve_red)
+        green_lut = self._build_curve_lut(self._params.curve_green)
+        blue_lut = self._build_curve_lut(self._params.curve_blue)
+
+        # 应用曲线到图像
+        # 首先应用RGB复合曲线
+        # 将像素值裁剪到0-255范围，避免索引越界
+        img_int = np.clip(img[:, :, :3], 0, 255).astype(np.int32)
+        img[:, :, 0] = rgb_lut[img_int[:, :, 0]]
+        img[:, :, 1] = rgb_lut[img_int[:, :, 1]]
+        img[:, :, 2] = rgb_lut[img_int[:, :, 2]]
+
+        # 然后叠加分通道曲线
+        img_int = np.clip(img[:, :, :3], 0, 255).astype(np.int32)
+        img[:, :, 0] = red_lut[img_int[:, :, 0]]
+        img[:, :, 1] = green_lut[img_int[:, :, 1]]
+        img[:, :, 2] = blue_lut[img_int[:, :, 2]]
+
+        # 应用曲线饱和度调整
+        if self._params.curve_saturation != 0:
+            sat_factor = 1 + self._params.curve_saturation / 100.0
+            # 计算亮度
+            luminance = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
+            # 调整饱和度
+            for i in range(3):
+                img[:, :, i] = luminance + (img[:, :, i] - luminance) * sat_factor
 
         return img
 
